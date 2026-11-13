@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reach Timing harness</title>
+  <style>body{font-family:sans-serif;background:#000;color:#eee;padding:20px} article{border-bottom:1px solid #333;padding:8px}</style>
+</head>
+<body>
+  <!-- Mock of the X profile DOM (data-testid hooks the extension relies on). Served at /nihaldev by the local test server. -->
+  <div id="profile">
+    <div data-testid="UserName"><div><span>Nihal Dev</span></div><div><span>@NihalDev</span></div><span>Follows you</span></div>
+    <div data-testid="UserDescription">Building things. <a href="https://t.co/x" title="https://example.com/work">example.com/work…</a> reach me hi@example.com</div>
+    <div data-testid="UserLocation"><span>Austin, TX</span></div>
+    <a data-testid="UserUrl" href="https://t.co/y" title="https://nihal.dev">nihal.dev</a>
+    <a href="/NihalDev/verified_followers"><span>12.3K</span> Followers</a>
+    <div data-testid="sendDMFromProfile">msg</div>
+  </div>
+  <div id="timeline"></div>
+
+  <script>
+    // Posts at 9..22 local (UTC-6) on 5 recent days -> should infer UTC-6 and agree with Austin.
+    const tl = document.getElementById('timeline');
+    const now = new Date();
+    let id = 1000;
+    for (let d = 1; d <= 5; d++) {
+      for (const lh of [9, 10, 12, 14, 17, 19, 21]) {
+        const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - d, lh + 6, 7));
+        const a = document.createElement('article');
+        a.setAttribute('data-testid', 'tweet');
+        a.innerHTML = '<div data-testid="User-Name"><a href="/NihalDev">Nihal Dev</a><a href="/NihalDev">@NihalDev</a></div>' +
+          '<a href="/NihalDev/status/' + (id++) + '"><time datetime="' + t.toISOString() + '">x</time></a>';
+        tl.appendChild(a);
+      }
+    }
+    // a repost of somebody else's tweet must be ignored
+    const other = document.createElement('article');
+    other.setAttribute('data-testid', 'tweet');
+    other.innerHTML = '<div data-testid="User-Name"><a href="/someoneelse">Other</a></div><a href="/someoneelse/status/1"><time datetime="2026-01-01T03:00:00.000Z">x</time></a>';
+    tl.appendChild(other);
+
+    // chrome.* stubs
+    window.__sent = [];
+    const store = { notionToken: 'secret_test', databaseId: 'a'.repeat(32), myTz: 'Asia/Kolkata' };
+    window.chrome = {
+      storage: {
+        local: { get: async () => ({ ...store }) },
+        onChanged: { addListener() {} },
+      },
+      runtime: {
+        sendMessage: async (msg) => {
+          window.__sent.push(msg);
+          if (msg.type === 'geocode') return { ok: true, place: { name: 'Austin', admin1: 'Texas', country: 'United States', countryCode: 'US', timezone: 'America/Chicago', precision: 3 } };
+          if (msg.type === 'notion-lookup') return { ok: true, configured: true, found: false };
+          if (msg.type === 'notion-save') return { ok: true, created: true, url: 'https://notion.so/new', status: 'New' };
+          return { ok: true };
+        },
+      },
+    };
+  </script>
+  <script src="/core.js"></script>
+  <script src="/content.js"></script>
+</body>
+</html>

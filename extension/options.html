@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reach Timing settings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; --bg:#fff; --fg:#111; --muted:#666; --line:#ddd; --accent:#1d6fe0; --ok:#157347; --bad:#c0392b; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#16181c; --fg:#eee; --muted:#9aa4ad; --line:#2f3336; --accent:#6cb6ff; --ok:#6ee7a8; --bad:#ff8f8f; } }
+    body { background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; }
+    main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 32px 0 8px; }
+    p, li { color: var(--muted); }
+    label { display: block; font-weight: 600; margin: 16px 0 4px; }
+    input[type=text], input[type=password] { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--fg); font: inherit; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    button { padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--fg); font: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #msg { margin-top: 16px; white-space: pre-wrap; }
+    .ok { color: var(--ok); } .bad { color: var(--bad); }
+    code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 4px; }
+    .hint { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Reach Timing</h1>
+  <p>Everything is stored in this browser only. The Notion token is sent only to <code>api.notion.com</code>.</p>
+
+  <h2>Notion</h2>
+  <ol>
+    <li>Go to <code>notion.so/profile/integrations</code>, create an <b>internal integration</b>, copy its secret.</li>
+    <li>In Notion, make a <b>database</b> (a table) for your leads. Open it, click <b>•••</b> → <b>Connections</b> → add your integration.</li>
+    <li>Paste the token and the database link below, then press <b>Test connection</b> and <b>Add missing columns</b>.</li>
+  </ol>
+  <label for="token">Integration token</label>
+  <input id="token" type="password" autocomplete="off" placeholder="ntn_… or secret_…">
+  <label for="db">Database link or ID</label>
+  <input id="db" type="text" autocomplete="off" placeholder="https://www.notion.so/…">
+
+  <h2>Timing</h2>
+  <label for="tz">Your timezone</label>
+  <input id="tz" type="text" list="tzlist" autocomplete="off">
+  <datalist id="tzlist"></datalist>
+  <label for="windows">Preferred message windows (their local time)</label>
+  <input id="windows" type="text" placeholder="09:00-11:30, 18:00-21:00">
+  <div class="hint">Used when the extension doesn’t have enough of their posts to see when they’re online.</div>
+  <label><input id="activity" type="checkbox"> Prefer the hours they actually post, when I have 10+ of their posts</label>
+
+  <div class="row">
+    <button class="primary" id="save">Save</button>
+    <button id="test">Test connection</button>
+    <button id="prepare">Add missing columns</button>
+  </div>
+  <div id="msg"></div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>
