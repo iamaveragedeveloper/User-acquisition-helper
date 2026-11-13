@@ -21,6 +21,8 @@
     .ok { color: var(--ok); } .bad { color: var(--bad); }
     code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 4px; }
     .hint { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    label.colrow { display: flex; gap: 8px; align-items: center; font-weight: 400; margin: 6px 0; }
+    #cols button { margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -28,11 +30,12 @@
   <h1>Reach Timing</h1>
   <p>Everything is stored in this browser only. The Notion token is sent only to <code>api.notion.com</code>.</p>
 
-  <h2>Notion</h2>
+  <h2>Notion <small style="font-weight:400;color:var(--muted)">(optional)</small></h2>
+  <p>Without a token everything still works: click the toolbar icon on a profile to see their time, best window and details. Notion only adds the one-click save.</p>
   <ol>
     <li>Go to <code>notion.so/profile/integrations</code>, create an <b>internal integration</b>, copy its secret.</li>
     <li>In Notion, make a <b>database</b> (a table) for your leads. Open it, click <b>•••</b> → <b>Connections</b> → add your integration.</li>
-    <li>Paste the token and the database link below, then press <b>Test connection</b> and <b>Add missing columns</b>.</li>
+    <li>Paste the token and the database link below, press <b>Test connection</b>, then tick the columns you want added (timezone, best window, etc.). Your existing columns, such as Status, are never changed.</li>
   </ol>
   <label for="token">Integration token</label>
   <input id="token" type="password" autocomplete="off" placeholder="ntn_… or secret_…">
@@ -46,14 +49,18 @@
   <label for="windows">Preferred message windows (their local time)</label>
   <input id="windows" type="text" placeholder="09:00-11:30, 18:00-21:00">
   <div class="hint">Used when the extension doesn’t have enough of their posts to see when they’re online.</div>
+  <label for="awake">Hours you’re awake (shaded on the comparison timeline)</label>
+  <input id="awake" type="text" placeholder="08:00-23:00">
   <label><input id="activity" type="checkbox"> Prefer the hours they actually post, when I have 10+ of their posts</label>
+
+  <label><input id="panel" type="checkbox"> Also show the floating panel on profile pages (the toolbar icon always shows the popup)</label>
 
   <div class="row">
     <button class="primary" id="save">Save</button>
     <button id="test">Test connection</button>
-    <button id="prepare">Add missing columns</button>
   </div>
   <div id="msg"></div>
+  <div id="cols"></div>
 </main>
 <script src="options.js"></script>
 </body>

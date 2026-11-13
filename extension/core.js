@@ -6,7 +6,9 @@
   'use strict';
 
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const DEFAULT_WINDOWS = '09:00-11:30, 18:00-21:00';
+  const DEFAULT_AWAKE = '08:00-23:00';
 
   // ---------------------------------------------------------------- zones
 
@@ -121,7 +123,7 @@
   }
 
   /** "09:00-11:30, 18:00-21:00" -> [[540,690],[1080,1260]] (minutes of local day). */
-  function parseWindows(str) {
+  function parseWindows(str, fallback) {
     const out = [];
     for (const part of String(str || '').split(',')) {
       const m = /^\s*([\d:]+)\s*[-–]\s*([\d:]+)\s*$/.exec(part);
@@ -135,7 +137,7 @@
         if (b > 0) out.push([0, b]);
       }
     }
-    return out.length ? out : parseWindows(DEFAULT_WINDOWS);
+    return out.length ? out : parseWindows(fallback || DEFAULT_WINDOWS, DEFAULT_WINDOWS);
   }
 
   /** Activity histogram (24 local hours) -> awake-hours windows where they post most. */
@@ -435,15 +437,25 @@
       samples: times.length,
       canSwitch: !!(locZone && hasPosts),
     };
+    out.my = describeSide(myZone, now, cityOf(input.myTz), input.myTz);
+    const posts = input.posts || [];
     if (used === 'none') {
       out.zone = null;
       out.confidence = 'None';
+      out.posts = analyzePosts(posts, null, myZone, now);
       return out;
     }
 
     const zone = used === 'location' ? locZone : { fixed: inferred.offsetHours * 60 };
     const lp = localParts(zone, now);
     out.zone = zone;
+    out.their = describeSide(
+      zone,
+      now,
+      used === 'location' ? place.name || cityOf(place.timezone) : 'Estimated',
+      used === 'location' ? place.timezone : formatOffset(lp.offsetMin)
+    );
+    out.dayDiff = dayNumber(lp) - dayNumber(myLp); // -1: it is still yesterday there, +1: already tomorrow
     out.zoneName = used === 'location' ? place.timezone : formatOffset(lp.offsetMin) + ' (estimated)';
     out.offsetMin = lp.offsetMin;
     out.offsetLabel = formatOffset(lp.offsetMin);
@@ -487,7 +499,167 @@
       out.status.startsAtMine = formatTime(myZone, out.status.startsAt);
       out.status.startsAtTheirs = formatTime(zone, out.status.startsAt);
     }
+    out.timeline = buildTimeline(zone, myZone, windows, parseWindows(input.myAwakeStr, DEFAULT_AWAKE), now);
+    out.posts = analyzePosts(posts, zone, myZone, now);
     return out;
+  }
+
+  // ------------------------------------------------------- their posts
+
+  function formatAgo(min) {
+    if (min < 1) return 'just now';
+    if (min < 60) return Math.round(min) + ' min ago';
+    if (min < 1440) return Math.round(min / 60) + 'h ago';
+    const d = Math.round(min / 1440);
+    return d + (d === 1 ? ' day ago' : ' days ago');
+  }
+
+  const fmtHour = (h) => (h % 12 === 0 ? 12 : h % 12) + ' ' + (h >= 12 ? 'PM' : 'AM');
+
+  function listText(items) {
+    if (items.length <= 1) return items.join('');
+    return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
+  }
+
+  /**
+   * Their recent posts and when they usually post.
+   * posts: [{ms, reply, pinned, text, href}]. zone may be null (timezone unknown): the latest-post part still works.
+   * `fresh` says whether it is still a good moment to reply to their newest post:
+   *   'now' (within 15 min) or 'recent' (within 2 hours).
+   */
+  function analyzePosts(posts, zone, myZone, now) {
+    const all = posts.filter((p) => !p.pinned).sort((a, b) => b.ms - a.ms);
+    const originals = all.filter((p) => !p.reply);
+    const shown = (originals.length ? originals : all).slice(0, 3);
+    const latest = shown.map((p) => {
+      const d = new Date(p.ms);
+      const ageMin = Math.max(0, (now.getTime() - p.ms) / 60000);
+      return {
+        ageMin,
+        ageText: formatAgo(ageMin),
+        theirTime: zone ? formatTime(zone, d) : null,
+        myTime: formatTime(myZone, d),
+        text: p.text || '',
+        href: p.href || null,
+        reply: !!p.reply,
+      };
+    });
+    let fresh = null;
+    if (latest.length) fresh = latest[0].ageMin <= 15 ? 'now' : latest[0].ageMin <= 120 ? 'recent' : null;
+    const out = { count: all.length, latest, fresh, pattern: null };
+    if (!zone) return out;
+
+    const NEED = 8;
+    const base = originals.length >= NEED ? originals : all.length >= NEED ? all : null;
+    if (!base) {
+      out.pattern = { enough: false, have: all.length, need: NEED };
+      return out;
+    }
+    const hist = new Array(24).fill(0);
+    for (const p of base) hist[localParts(zone, new Date(p.ms)).hour]++;
+    const s = hist.map((_, h) => hist[(h + 23) % 24] + 2 * hist[h] + hist[(h + 1) % 24]);
+    const order = hist.map((_, h) => h).sort((a, b) => s[b] - s[a] || a - b);
+    const peaks = [];
+    for (const h of order) {
+      if (s[h] < 3 || s[h] < 0.5 * s[order[0]]) break;
+      if (peaks.every((q) => Math.min(Math.abs(q - h), 24 - Math.abs(q - h)) >= 3)) peaks.push(h);
+      if (peaks.length === 3) break;
+    }
+    peaks.sort((a, b) => a - b);
+
+    const ts = base.map((p) => p.ms);
+    const spanDays = (Math.max.apply(null, ts) - Math.min.apply(null, ts)) / 86400000;
+    let perDayText = '';
+    if (spanDays >= 1) {
+      const perDay = base.length / spanDays;
+      if (perDay >= 1.5) perDayText = 'about ' + Math.round(perDay) + ' posts a day';
+      else if (perDay >= 0.8) perDayText = 'about 1 post a day';
+      else perDayText = 'about 1 post every ' + Math.round(1 / perDay) + ' days';
+    }
+
+    const pattern = { enough: true, have: base.length, usual: peaks, perDayText, next: null };
+    if (peaks.length) {
+      const shift = localParts(myZone, now).offsetMin - localParts(zone, now).offsetMin;
+      pattern.usualTheirsList = peaks.map(fmtHour);
+      pattern.usualMineList = peaks.map((h) => {
+        const m = (((h * 60 + shift) % 1440) + 1440) % 1440;
+        return fmtClock(Math.floor(m / 60), m % 60).replace(':00 ', ' ');
+      });
+      pattern.usualTheirsText = listText(pattern.usualTheirsList);
+      pattern.usualMineText = listText(pattern.usualMineList);
+      const st = windowStatus(zone, peaks.map((h) => [h * 60, h * 60 + 60]), now);
+      if (st.state === 'now') pattern.next = { inside: true };
+      else if (st.state === 'later') {
+        pattern.next = {
+          inside: false,
+          inMin: st.inMin,
+          theirs: fmtHour(localParts(zone, st.startsAt).hour),
+          mine: formatTime(myZone, st.startsAt),
+        };
+      }
+    }
+    out.pattern = pattern;
+    return out;
+  }
+
+  function cityOf(tz) {
+    return String(tz || '').split('/').pop().replace(/_/g, ' ');
+  }
+
+  function dayNumber(p) {
+    return Date.UTC(p.year, p.month - 1, p.day) / 86400000;
+  }
+
+  /** What one side of the comparison shows. */
+  function describeSide(zone, now, name, zoneLabel) {
+    const p = localParts(zone, now);
+    return {
+      name,
+      zoneLabel,
+      clock: fmtClock(p.hour, p.minute),
+      dow: WEEKDAYS[p.weekday],
+      dateLabel: WEEKDAYS[p.weekday] + ', ' + MONTHS[p.month - 1] + ' ' + p.day,
+      offsetLabel: formatOffset(p.offsetMin),
+      greeting: greetingFor(p.hour),
+      hour: p.hour,
+      daytime: p.hour >= 6 && p.hour < 18,
+    };
+  }
+
+  /**
+   * The next 24 hours as 24 one-hour cells, seen from both clocks at once.
+   * A cell is judged at its midpoint. `both` = they are in a good window AND you are awake.
+   */
+  function buildTimeline(zone, myZone, windows, myAwake, now) {
+    const HOUR = 3600000;
+    const base = Math.floor(now.getTime() / HOUR) * HOUR;
+    const cells = [];
+    const theirTicks = [];
+    const myTicks = [];
+    const tick = (z, k, t, list) => {
+      const p = localParts(z, new Date(t));
+      if (p.hour % 6 === 0) {
+        const clock = fmtClock(p.hour, p.minute);
+        list.push({ pos: k, label: p.hour === 0 ? WEEKDAYS[p.weekday] + ' ' + clock : clock });
+      }
+    };
+    for (let k = 0; k < 24; k++) {
+      const t = base + k * HOUR;
+      const mid = new Date(t + HOUR / 2);
+      const tp = localParts(zone, mid);
+      const mp = localParts(myZone, mid);
+      const theirGood = !!inWindows(tp.hour * 60 + tp.minute, windows);
+      const myOk = !!inWindows(mp.hour * 60 + mp.minute, myAwake);
+      cells.push({
+        theirGood,
+        theirNight: tp.hour >= 23 || tp.hour < 7,
+        myAwake: myOk,
+        both: theirGood && myOk,
+      });
+      tick(zone, k, t, theirTicks);
+      tick(myZone, k, t, myTicks);
+    }
+    return { cells, theirTicks, myTicks, nowPct: ((now.getTime() - base) / HOUR / 24) * 100 };
   }
 
   // ------------------------------------------------------------- helpers
@@ -504,10 +676,10 @@
   }
 
   const api = {
-    DEFAULT_WINDOWS, WEEKDAYS,
+    DEFAULT_WINDOWS, DEFAULT_AWAKE, WEEKDAYS,
     localParts, formatTime, formatOffset, formatDuration, describeDelta, greetingFor, fmtClock,
     parseWindows, windowsFromHist, windowStatus, windowsInMyTime, windowsInTheirTime,
-    inferOffsetFromPosts, circDiffHours,
+    inferOffsetFromPosts, circDiffHours, analyzePosts, formatAgo,
     parseLocation, pickPlace, placeLabel, flagCountry,
     analyze, parseCount,
   };

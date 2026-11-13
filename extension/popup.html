@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reach Timing</title>
+  <style>
+    html, body { margin: 0; background: #0e1116; }
+    /* Chrome caps popups at ~600px tall, so the card scrolls; hide the bar so it can't steal width from the fixed 380px layout */
+    html { scrollbar-width: none; }
+    html::-webkit-scrollbar { display: none; }
+    body { width: 380px; min-height: 120px; }
+    #msg { padding: 18px 14px; color: #aab4bd; font: 13px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+    #msg b { color: #e7e9ea; }
+  </style>
+</head>
+<body>
+  <div id="msg">Loading…</div>
+  <div id="root" hidden></div>
+  <script src="panel-css.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -9,8 +9,6 @@ const RT = self.RT;
 const NOTION_VERSION = '2022-06-28';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
-
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return false;
   route(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: friendly(e) }));
@@ -21,7 +19,7 @@ async function route(msg) {
   switch (msg && msg.type) {
     case 'geocode': return geocode(msg.location);
     case 'notion-test': return notionTest();
-    case 'notion-prepare': return notionPrepare();
+    case 'notion-prepare': return notionPrepare(msg.keys);
     case 'notion-lookup': return notionLookup(msg.handle);
     case 'notion-save': return notionSave(msg.profile);
     case 'open-options': chrome.runtime.openOptionsPage(); return { ok: true };
@@ -135,6 +133,7 @@ const FIELDS = [
   { key: 'utcOffset', create: 'UTC offset', names: ['utc offset', 'offset', 'utc'], types: ['number', 'rich_text'], make: 'number' },
   { key: 'theirTime', create: 'Their time (at save)', names: ['their time (at save)', 'their time', 'local time'], types: ['rich_text'], make: 'rich_text' },
   { key: 'bestWindow', create: 'Best window (my time)', names: ['best window (my time)', 'best window', 'best time', 'window'], types: ['rich_text'], make: 'rich_text' },
+  { key: 'usualTimes', create: 'Usual post times (my time)', names: ['usual post times (my time)', 'usual post times', 'posts around', 'usual times'], types: ['rich_text'], make: 'rich_text' },
   { key: 'confidence', create: 'TZ confidence', names: ['tz confidence', 'timezone confidence', 'confidence'], types: ['select', 'rich_text'], make: 'select', options: ['High', 'Medium', 'Low'] },
   { key: 'bio', create: 'Bio', names: ['bio', 'description', 'about'], types: ['rich_text'], make: 'rich_text' },
   { key: 'links', create: 'Links', names: ['links', 'website', 'websites'], types: ['rich_text', 'url'], make: 'rich_text' },
@@ -149,8 +148,21 @@ const FIELDS = [
 
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
+/** The columns worth adding for the timing use case; the rest are optional extras. */
+const CORE_KEYS = new Set(['url', 'location', 'timezone', 'theirTime', 'bestWindow', 'usualTimes', 'confidence']);
+/** Fields that carry scraped data (everything except the handle/title, status and bookkeeping). */
+const DATA_KEYS = new Set([
+  'displayName', 'url', 'location', 'place', 'timezone', 'utcOffset', 'theirTime', 'bestWindow',
+  'usualTimes', 'confidence', 'bio', 'links', 'followers', 'lastPost', 'dmOpen', 'followsMe',
+]);
+
 function mapProperties(schema) {
-  const props = Object.entries(schema.properties || {}).map(([name, p]) => ({ name, id: p.id, type: p.type }));
+  const props = Object.entries(schema.properties || {}).map(([name, p]) => ({
+    name,
+    id: p.id,
+    type: p.type,
+    options: ((p[p.type] || {}).options || []).map((o) => o.name), // select / status options
+  }));
   const title = props.find((p) => p.type === 'title');
   const taken = new Set(title ? [title.name] : []);
   const map = {};
@@ -186,13 +198,17 @@ function toNotion(type, value) {
   }
 }
 
+/** Returns { props, wrote }: the Notion payload and how many data fields found a matching column. */
 function buildProperties(map, p, isNew) {
   const out = {};
+  let wrote = 0;
   const set = (key, value) => {
     const prop = map[key];
     if (!prop) return;
     const v = toNotion(prop.type, value);
-    if (v !== undefined) out[prop.name] = v;
+    if (v === undefined) return;
+    out[prop.name] = v;
+    if (DATA_KEYS.has(key)) wrote++;
   };
   set('handle', '@' + p.handle);
   set('displayName', p.displayName);
@@ -203,6 +219,7 @@ function buildProperties(map, p, isNew) {
   set('utcOffset', p.utcOffset);
   set('theirTime', p.theirTime);
   set('bestWindow', p.bestWindow);
+  set('usualTimes', p.usualTimes);
   set('confidence', p.confidence);
   set('bio', p.bio);
   set('links', p.links);
@@ -211,8 +228,16 @@ function buildProperties(map, p, isNew) {
   set('dmOpen', p.dmOpen);
   set('followsMe', p.followsMe);
   set('checked', new Date().toISOString());
-  if (isNew) set('status', 'New'); // never overwrite the status you maintain by hand
-  return out; // 'notes' is intentionally never written
+  // Status is yours: never touched on update. On a new row it is only set when there is a "New" option to use
+  // (a Notion "Status" column otherwise starts at its own default, e.g. "Information").
+  if (isNew && map.status) {
+    if (map.status.type === 'select') set('status', 'New');
+    else {
+      const opt = map.status.options.find((o) => norm(o) === 'new');
+      if (opt) set('status', opt);
+    }
+  }
+  return { props: out, wrote }; // 'notes' is intentionally never written
 }
 
 // ------------------------------------------------------------- Notion ops
@@ -269,15 +294,19 @@ async function notionSave(profile) {
   const info = mapProperties(schema);
   if (!info.title) throw new Error('That database has no title column.');
 
+  // Which useful columns does this database lack? (tells the UI to nudge you towards settings)
+  const missingCore = FIELDS.filter((f) => CORE_KEYS.has(f.key) && !info.map[f.key]).map((f) => f.create);
+
   const existing = await findExisting(token, databaseId, profile.handle, info);
   if (existing) {
-    const properties = buildProperties(info.map, profile, false);
+    const { props: properties, wrote } = buildProperties(info.map, profile, false);
     const page = await notion(token, '/pages/' + existing.id, 'PATCH', { properties });
-    return { ok: true, created: false, url: page.url, status: pageStatus(page, info.map) };
+    return { ok: true, created: false, url: page.url, status: pageStatus(page, info.map), wrote, missingCore };
   }
   const create = (props) =>
     notion(token, '/pages', 'POST', { parent: { database_id: databaseId }, properties: props });
-  const properties = buildProperties(info.map, profile, true);
+  const built = buildProperties(info.map, profile, true);
+  const properties = built.props;
   let page;
   try {
     page = await create(properties);
@@ -288,7 +317,7 @@ async function notionSave(profile) {
       page = await create(properties);
     } else throw e;
   }
-  return { ok: true, created: true, url: page.url, status: pageStatus(page, info.map) };
+  return { ok: true, created: true, url: page.url, status: pageStatus(page, info.map), wrote: built.wrote, missingCore };
 }
 
 async function notionTest() {
@@ -305,20 +334,23 @@ async function notionTest() {
     }
     const m = info.map[f.key];
     if (m) matched.push({ key: f.key, column: m.name, type: m.type });
-    else missing.push({ key: f.key, column: f.create });
+    else if (f.key !== 'status') missing.push({ key: f.key, column: f.create, kind: f.make, core: CORE_KEYS.has(f.key) });
   }
   return { ok: true, title, matched, missing };
 }
 
-async function notionPrepare() {
+/** Adds missing columns. `keys` (optional) limits it to the columns you ticked; without it every missing one is added. */
+async function notionPrepare(keys) {
   const { token, databaseId } = await requireNotion();
   const schema = await getSchema(token, databaseId);
   const info = mapProperties(schema);
   const existingNames = new Set(info.props.map((p) => norm(p.name)));
+  const only = Array.isArray(keys) ? new Set(keys) : null;
   const add = {};
   const added = [];
   for (const f of FIELDS) {
     if (f.title || info.map[f.key]) continue;
+    if (only && !only.has(f.key)) continue;
     if (existingNames.has(norm(f.create))) continue; // name taken by a column of another type: leave alone
     let def;
     if (f.make === 'select') def = { select: { options: (f.options || []).map((name) => ({ name })) } };

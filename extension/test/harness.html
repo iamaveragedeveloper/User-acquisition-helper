@@ -25,13 +25,34 @@
     for (let d = 1; d <= 5; d++) {
       for (const lh of [9, 10, 12, 14, 17, 19, 21]) {
         const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - d, lh + 6, 7));
+        if (t > now) continue; // real posts are never in the future
         const a = document.createElement('article');
         a.setAttribute('data-testid', 'tweet');
         a.innerHTML = '<div data-testid="User-Name"><a href="/NihalDev">Nihal Dev</a><a href="/NihalDev">@NihalDev</a></div>' +
-          '<a href="/NihalDev/status/' + (id++) + '"><time datetime="' + t.toISOString() + '">x</time></a>';
+          '<a href="/NihalDev/status/' + id + '"><time datetime="' + t.toISOString() + '">x</time></a>' +
+          '<div data-testid="tweetText">Older post number ' + (id++) + ' about building in public</div>';
         tl.appendChild(a);
       }
     }
+    // a post from 7 minutes ago (add ?stale=1 to make it 5 hours old instead), a pinned old post and a reply
+    const ageMs = location.search.includes('stale=1') ? 5 * 3600000 : 7 * 60000;
+    const fresh = document.createElement('article');
+    fresh.setAttribute('data-testid', 'tweet');
+    fresh.innerHTML = '<div data-testid="User-Name"><a href="/NihalDev">Nihal Dev</a><a href="/NihalDev">@NihalDev</a></div>' +
+      '<a href="/NihalDev/status/9999"><time datetime="' + new Date(Date.now() - ageMs).toISOString() + '">x</time></a>' +
+      '<div data-testid="tweetText">Just shipped the new onboarding flow, would love feedback from anyone running a small team.</div>';
+    tl.prepend(fresh);
+    const pinned = document.createElement('article');
+    pinned.setAttribute('data-testid', 'tweet');
+    pinned.innerHTML = '<div data-testid="socialContext">Pinned</div><div data-testid="User-Name"><a href="/NihalDev">Nihal Dev</a><a href="/NihalDev">@NihalDev</a></div>' +
+      '<a href="/NihalDev/status/1"><time datetime="2024-03-01T10:00:00.000Z">x</time></a><div data-testid="tweetText">My pinned post from long ago</div>';
+    tl.prepend(pinned);
+    const reply = document.createElement('article');
+    reply.setAttribute('data-testid', 'tweet');
+    reply.innerHTML = '<div data-testid="User-Name"><a href="/NihalDev">Nihal Dev</a><a href="/NihalDev">@NihalDev</a></div>Replying to @someone' +
+      '<a href="/NihalDev/status/5000"><time datetime="' + new Date(Date.now() - 2 * 60000).toISOString() + '">x</time></a>' +
+      '<div data-testid="tweetText">thanks!</div>';
+    tl.prepend(reply);
     // a repost of somebody else's tweet must be ignored
     const other = document.createElement('article');
     other.setAttribute('data-testid', 'tweet');
@@ -40,24 +61,31 @@
 
     // chrome.* stubs
     window.__sent = [];
-    const store = { notionToken: 'secret_test', databaseId: 'a'.repeat(32), myTz: 'Asia/Kolkata' };
+    // default: NO Notion configured. Add ?notion=1 to simulate a configured token.
+    const store = { myTz: 'Asia/Kolkata' };
+    if (location.search.includes('notion=1')) Object.assign(store, { notionToken: 'secret_test', databaseId: 'a'.repeat(32) });
     window.chrome = {
       storage: {
         local: { get: async () => ({ ...store }) },
         onChanged: { addListener() {} },
       },
       runtime: {
+        onMessage: { addListener(fn) { window.__listener = fn; } },
         sendMessage: async (msg) => {
           window.__sent.push(msg);
           if (msg.type === 'geocode') return { ok: true, place: { name: 'Austin', admin1: 'Texas', country: 'United States', countryCode: 'US', timezone: 'America/Chicago', precision: 3 } };
           if (msg.type === 'notion-lookup') return { ok: true, configured: true, found: false };
-          if (msg.type === 'notion-save') return { ok: true, created: true, url: 'https://notion.so/new', status: 'New' };
+          if (msg.type === 'notion-save') return { ok: true, created: true, url: 'https://notion.so/new', status: 'Information', wrote: location.search.includes('bare=1') ? 0 : 3, missingCore: ['Profile URL', 'TZ confidence'] };
           return { ok: true };
         },
       },
     };
   </script>
   <script src="/core.js"></script>
+  <script src="/panel-css.js"></script>
+  <script src="/ui.js"></script>
   <script src="/content.js"></script>
+  <!-- the real popup page; the test server injects a chrome.tabs stub that talks to the content script above -->
+  <iframe id="pop" src="/popup.html" style="position:fixed;left:20px;top:10px;width:380px;height:calc(100vh - 20px);border:1px solid #444;background:#15181c"></iframe>
 </body>
 </html>

@@ -2,21 +2,29 @@
 
 Chrome extension for x.com profiles you open yourself. It shows:
 
-- their **local time** and how far it is from yours,
-- whether **now is a good time to message** (and when the next window is, in your time),
-- a **24-hour posting heatmap** and a timezone estimate from when they post,
-- a **confidence badge** (self-reported location vs. posting pattern; flags conflicts),
-- bio links and email, followers, whether DMs look open, whether they follow you,
+- **one clear answer at the top**: "They just posted, reply now then DM", "Good time to message", or "Better to wait,
+  try 8:30 PM your time",
+- **your clock and theirs side by side**,
+- four short rows: **Last post** (how long ago, with a link), **Usually posts** (in your time), **Next post**, **DMs**,
+- everything wordier lives under **More details** (collapsed): latest posts with their text and times, their posting
+  routine, where they are and how sure we are, a 24-hour you-vs-them timeline, followers, links and bio,
 
-and a **Save to Notion** button that writes all of it to your leads database (or updates the existing row for that handle).
+The idea: when they post, reply to the post first, then DM within about 5 minutes. X doesn't add new posts to an open
+page, so refresh the profile to check for new ones. To work out their usual posting times, scroll down their profile
+to load more posts (about 8 are needed).
+
+**No Notion needed.** Open a profile and click the toolbar icon: the popup shows all of the above (a floating panel on the
+page shows it too; turn that off in settings if you only want the popup). Notion is an optional extra that adds a
+**Save to Notion** button, which writes it to your leads database (or updates the existing row for that handle).
 
 ## Install
 
 1. Open `chrome://extensions`, turn on **Developer mode**.
 2. **Load unpacked** and pick this `extension` folder.
-3. Click the extension icon (or the ⚙ in the panel) to open settings.
+3. Pin the extension, open an X profile, click the icon. Settings are behind the ⚙ in the popup.
+   If the profile tab was open before you installed or reloaded the extension, refresh that tab once.
 
-## Notion setup (once)
+## Notion setup (optional, once)
 
 1. `notion.so/profile/integrations` → create an **internal integration** and copy its secret.
 2. In Notion create a **database** (a table). Open it → **•••** → **Connections** → add your integration.

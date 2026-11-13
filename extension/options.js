@@ -13,7 +13,9 @@ async function load() {
     const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
     $('tzlist').innerHTML = zones.map((z) => '<option value="' + z + '">').join('');
   } catch (_) { /* datalist is optional */ }
-  const s = await chrome.storage.local.get(['notionToken', 'databaseId', 'myTz', 'windowsStr', 'useActivity']);
+  const s = await chrome.storage.local.get(['notionToken', 'databaseId', 'myTz', 'windowsStr', 'myAwake', 'useActivity', 'showPanel']);
+  $('panel').checked = s.showPanel !== false;
+  $('awake').value = s.myAwake || '08:00-23:00';
   $('token').value = s.notionToken || '';
   $('db').value = s.databaseId || '';
   $('tz').value = s.myTz || defaultTz;
@@ -42,37 +44,80 @@ async function save() {
     myTz: tz,
     windowsStr: $('windows').value.trim() || DEFAULT_WINDOWS,
     useActivity: $('activity').checked,
+    showPanel: $('panel').checked,
+    myAwake: $('awake').value.trim() || '08:00-23:00',
   });
   say('Saved.', 'ok');
   return true;
 }
 
-async function call(type) {
+async function call(type, extra) {
   if (!(await save())) return;
   say('Working…');
-  const res = await chrome.runtime.sendMessage({ type }).catch((e) => ({ ok: false, error: String(e.message || e) }));
+  const res = await chrome.runtime
+    .sendMessage(Object.assign({ type }, extra || {}))
+    .catch((e) => ({ ok: false, error: String(e.message || e) }));
   return res;
+}
+
+const KIND = { rich_text: 'text', url: 'link', number: 'number', select: 'select', date: 'date', checkbox: 'checkbox' };
+
+/** Tick-list of the columns your database doesn't have yet; the timing ones are pre-ticked. */
+function renderMissing(missing) {
+  const box = $('cols');
+  box.textContent = '';
+  if (!missing.length) return;
+  const h = document.createElement('h2');
+  h.textContent = 'Columns you can add';
+  const p = document.createElement('p');
+  p.textContent = 'Your existing columns are never changed. Untick anything you don’t want in your table.';
+  box.append(h, p);
+  for (const m of missing) {
+    const label = document.createElement('label');
+    label.className = 'colrow';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = m.key;
+    cb.checked = !!m.core;
+    const span = document.createElement('span');
+    span.textContent = m.column + ' (' + (KIND[m.kind] || m.kind) + ')';
+    label.append(cb, span);
+    box.appendChild(label);
+  }
+  const btn = document.createElement('button');
+  btn.className = 'primary';
+  btn.textContent = 'Add selected columns';
+  btn.addEventListener('click', async () => {
+    const keys = Array.from(box.querySelectorAll('input:checked')).map((i) => i.value);
+    if (!keys.length) return say('Tick at least one column.', 'bad');
+    const res = await call('notion-prepare', { keys });
+    if (!res) return;
+    if (!res.ok) return say(res.error, 'bad');
+    say(res.added.length ? 'Added columns: ' + res.added.join(', ') : 'Nothing was added.', 'ok');
+    runTest(true);
+  });
+  box.appendChild(btn);
 }
 
 $('save').addEventListener('click', save);
 
-$('test').addEventListener('click', async () => {
+async function runTest(keepMessage) {
   const res = await call('notion-test');
   if (!res) return;
-  if (!res.ok) return say(res.error, 'bad');
+  if (!res.ok) {
+    renderMissing([]);
+    return say(res.error, 'bad');
+  }
+  const filled = res.matched.filter((m) => m.key !== 'status' && m.key !== 'notes');
   const lines = ['Connected to “' + res.title + '”.', ''];
-  lines.push('Columns it will fill: ' + res.matched.map((m) => m.column).join(', '));
-  if (res.missing.length) {
-    lines.push('', 'Not in your database yet (press “Add missing columns”): ' + res.missing.map((m) => m.column).join(', '));
-  } else lines.push('', 'All columns are present.');
-  say(lines.join('\n'), 'ok');
-});
+  lines.push('Will fill: ' + filled.map((m) => m.column).join(', '));
+  const kept = res.matched.filter((m) => m.key === 'status' || m.key === 'notes').map((m) => m.column);
+  if (kept.length) lines.push('Never touched by the extension: ' + kept.join(', ') + ' (plus any other columns you have)');
+  lines.push('', res.missing.length ? 'Tick the columns you want added below.' : 'Every column is present.');
+  if (!keepMessage || res.missing.length === 0) say(lines.join('\n'), 'ok');
+  renderMissing(res.missing);
+}
 
-$('prepare').addEventListener('click', async () => {
-  const res = await call('notion-prepare');
-  if (!res) return;
-  if (!res.ok) return say(res.error, 'bad');
-  say(res.added.length ? 'Added columns: ' + res.added.join(', ') : 'Nothing to add. Your database already has every column.', 'ok');
-});
+$('test').addEventListener('click', () => runTest(false));
 
 load();
